@@ -24,7 +24,7 @@ plot!(M, 0, 10, color=:black)
 module EventFiltering
 using InverseLaplace, Plots
 
-export Filter, LaplaceFilter, GammaFilter, ExponentialFilter, EventTrain, FilteredEventTrain, freeze, fromto, ℒ
+export Filter, LaplaceFilter, GammaFilter, ExponentialFilter, EventTrain, FilteredEventTrain, freeze, fromto, ℒ, delay
     # Base.:∘,
     # Base.:+,
     # Base.:-,
@@ -178,10 +178,11 @@ Base.:*(a, s::EventTrain{S,E}) where {S,E} = EventTrain{S,E}(s.times, a.*s.event
 # Scale FilteredEventTrain
 Base.:*(a, s::FilteredEventTrain{S,E,F}) where {S,E,F} = FilteredEventTrain{S,E,F}(a.*s.event_train, s.F)
 
-
+# Subsample events of a (Filtered)EventTrain
 Base.getindex(s::EventTrain{T, E}, r) where {T,E} = EventTrain{T, E}(s.times[r], s.events[r])
 Base.getindex(s::FilteredEventTrain{T, E, F}, r) where {T,E,F} = FilteredEventTrain{T, E, F}(s.event_train[r], s.F)
 
+# Slice a time interval out of a (Filtered)EventTrain
 function fromto(s::EventTrain{T, E}, from, to) where {T,E}
     if from == :start
         from = minimum(s.times)-1.0
@@ -193,11 +194,19 @@ function fromto(s::EventTrain{T, E}, from, to) where {T,E}
     r = searchsortedfirst(s.times, from):searchsortedlast(s.times, to)
     return s[r]
 end
-
 fromto(s::FilteredEventTrain{T, E, F}, from, to) where {T,E,F} = FilteredEventTrain{T, E, F}(fromto(s.event_train, from, to), s.F)
 
+# Shift a (Filtered)EventTrain in time
+delay(s::EventTrain{T, E}, dt) where {T,E} = EventTrain{T, E}(s.times + dt, s.events)
+delay(s::FilteredEventTrain{T, E, F}, dt) where {T,E,F} = FilteredEventTrain{T, E, F}(delay(s.event_train, dt), s.F)
 
-
+# Convolve two EventTrains
+Base.:∘(e1::EventTrain{T, E}, e2::EventTrain{T, E}) where {T,E} = mapreduce(dtw->delay(dtw[2]*e1, dtw[1]), +, zip(e2.times,e2.events))
+# Convolve two FilteredEventTrains
+Base.:∘(e1::FilteredEventTrain{T, E, F}, e2::FilteredEventTrain{T, E, F}) where {T,E,F} = FilteredEventTrain(e1.event_train∘e2.event_train, e1.F∘e2.F)
+# Convolve one FilteredEventTrain and one EventTrain
+Base.:∘(e1::FilteredEventTrain{T, E, F}, e2::EventTrain{T, E}) where {T,E,F} = FilteredEventTrain(e1.event_train∘e2, e1.F)
+Base.:∘(e1::EventTrain{T, E}, e2::FilteredEventTrain{T, E, F}) where {T,E,F} = e2∘e1
 
 ################################################
 # Interaction between filters and event trains #
@@ -237,10 +246,15 @@ end
 @recipe f(e::EventTrain{T,E}, y=0.0) where {T,E<:Real} = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; y+e.events'; fill(NaN, length(e.times))'][:])
 @recipe f(e::EventTrain, y=0.0, height=1.0) = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; fill(y+height, length(e.times))'; fill(NaN, length(e.times))'][:])
 
-@recipe function f(e::FilteredEventTrain, xmin=0, xmax=nothing; show_events=false, show_kernels=false, stack_kernels=true, event_color=:black)
-    if xmax==nothing
+@recipe function f(e::FilteredEventTrain, xmin=:start, xmax=:end; show_events=false, show_kernels=false, stack_kernels=true, event_color=:black)
+    if xmax==:end
         xmax = maximum(e.event_train.times)
     end
+    if xmin==:start
+        xmin = minimum(e.event_train.times)
+    end
+
+    xlims := (xmin, xmax)
 
     if show_events
         @series begin
@@ -252,16 +266,27 @@ end
 
     if show_kernels
         f = freeze(e.F)
-        for (t,w) ∈ zip(e.event_train.times, e.event_train.events)
-            @series begin
-                linewidth := 1
-                linestyle := :dot
-                color := event_color
-                label := ""
-                if stack_kernels
-                    x->fromto(e, :start, t)(x), t, xmax
-                else
-                    x->convert(Float64, x>=t ? (w*f(x-t)) : 0.0), t, xmax
+        sub = fromto(e, :start, xmax)
+        for (t,w) ∈ zip(sub.event_train.times, sub.event_train.events)
+            if t >= xmax
+                continue
+            end
+
+            if stack_kernels
+                @series begin
+                    linewidth := 1
+                    linestyle := :dot
+                    color := event_color
+                    label := ""
+                    (x->convert(Float64, fromto(sub, :start, t)(x))), t, xmax
+                end
+            else
+                @series begin
+                    linewidth := 1
+                    linestyle := :dot
+                    color := event_color
+                    label := ""
+                    (x->convert(Float64, x>=t ? (w*f(x-t)) : 0.0)), t, xmax
                 end
             end
         end

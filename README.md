@@ -7,8 +7,19 @@ Filters are operators that map sequences of events onto functions of time.
 This design is for example suitable for working with neural spike trains and neural filter responses.
 
 ## Filters
-Thus far, only `LaplaceFilter`s are implemented, defined by their Laplace Transform.
+Thus far, `LaplaceFilter`s and `GammaFilter`s are implemented.
+
+### LaplaceFilters
+`LaplaceFilter`s are defined by their Laplace Transform.
 They are closed under linear operations (scaling, addition, sign-inversion, subtraction) as well as convolution.
+
+### GammaFilters
+`GammaFilter`s are specific filters with a shape equal to the PDF of a Gamma-Distribution.
+For equal constants `α`, they are closed under convolution; for different `\alpha`s,
+they are automatically converted to `LaplaceFilter`s before convolution.
+`GammaFilter`s are very efficient, yet less flexible than `LaplaceFilter`s.
+For operations like addition, subtraction, negation etc. they must be manually converted to `LaplaceFilter`s.
+
 
 ## Events
 Events are represented in either an `EventTrain`, or a `FilteredEventTrain`.
@@ -19,6 +30,10 @@ Both support subsampling of spikes via indexing or slicing of a time-interval us
 `freeze`ing the `FilteredEventTrain` first can speed up the process a lot -- in particular if the filter is truncated to a small `max_range`.
 
 Basic plotting of `(Filtered)EventTrain`s is provided via a `Plots` user recipe.
+
+### Convolutions of event trains
+`(Filtered)EventTrain`s can be convolved as well.
+This can be useful for composing complex, structured event sequences.
 
 ## Usage examples:
 
@@ -36,8 +51,8 @@ M = X - F∘X
 using Plots
 pyplot()
 
-plot(X, 0,10, color=:blue, event_color=:blue, show_events=false)
-plot!(F∘x, 0, 10, color=:red, show_events=false)
+plot(X, 0,10, color=:blue, event_color=:blue, show_events=false, show_kernels=true)
+plot!(F∘X, 0, 10, color=:red, show_events=true, show_kernels=true)
 plot!(M, 0, 10, color=:black)
 ```
 
