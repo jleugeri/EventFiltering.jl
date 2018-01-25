@@ -22,7 +22,7 @@ Basic plotting of `(Filtered)EventTrain`s is provided via a `Plots` user recipe.
 
 ## Usage examples:
 
-julia```
+```julia
 # Working with event trains:
 e1 = EventTrain([1.0, 2.0, 3.0])
 e2 = 2*EventTrain([0.5, 1.5, 2.5, 3.5])
@@ -39,6 +39,6 @@ pyplot()
 plot(X, 0,10, color=:blue, event_color=:blue, show_events=false)
 plot!(F∘x, 0, 10, color=:red, show_events=false)
 plot!(M, 0, 10, color=:black)
-'''
+```
 
 For more examples, see the the [docs](./docs/) folder.
