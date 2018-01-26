@@ -199,7 +199,12 @@ end
 fromto(s::FilteredEventTrain{T, E, F}, from, to) where {T,E,F} = FilteredEventTrain{T, E, F}(fromto(s.event_train, from, to), s.F)
 
 # Shift a (Filtered)EventTrain in time
-delay(s::EventTrain{T, E}, dt) where {T,E} = EventTrain{T, E}(sort(s.times + dt), s.events)
+function delay(s::EventTrain{T, E}, dt) where {T,E}
+    new_times = s.times+dt
+    ord = sortperm(new_times)
+    EventTrain{T, E}(new_times[ord], s.events[ord])
+end
+
 delay(s::FilteredEventTrain{T, E, F}, dt) where {T,E,F} = FilteredEventTrain{T, E, F}(delay(s.event_train, dt), s.F)
 
 # Convolve two EventTrains

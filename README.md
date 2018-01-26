@@ -59,7 +59,7 @@ plot!(M, 0, 10, color=:black)
 
 ### Subsampling event trains
 ```julia
-e = EventTrain(collect(1:10))
+e = EventTrain(collect(1.0:10.0), collect(1:10))
 
 # Subsample roughly 30% of the events
 e_sub = e[rand(length(e)).<0.3]
