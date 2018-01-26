@@ -37,6 +37,7 @@ This can be useful for composing complex, structured event sequences.
 
 ## Usage examples:
 
+### An example plot
 ```julia
 # Working with event trains:
 e1 = EventTrain([1.0, 2.0, 3.0])
@@ -54,6 +55,26 @@ pyplot()
 plot(X, 0,10, color=:blue, event_color=:blue, show_events=false, show_kernels=true)
 plot!(F∘X, 0, 10, color=:red, show_events=true, show_kernels=true)
 plot!(M, 0, 10, color=:black)
+```
+
+### Subsampling event trains
+```julia
+e = EventTrain(collect(1:10))
+
+# Subsample roughly 30% of the events
+e_sub = e[rand(length(e)).<0.3]
+
+# Take every second spike
+e_2nd = e[1:2:end]
+```
+
+### Jitter/delay event trains in time
+```julia
+# shift by a fixed amount
+e_shift = delay(e, 1.0)
+
+# jitter randomly
+e_jitter = delay(e, 0.1*randn(length(e)))
 ```
 
 For more examples, see the the [docs](./docs/) folder.
