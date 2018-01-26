@@ -44,38 +44,50 @@ abstract type Filter{T, E} end
 
 ### LaplaceFilter
 struct LaplaceFilter{T} <: Filter{T, Float64}
-    terms::Vector{Function}
+    terms::Vector{<:Function}
 end
-LaplaceFilter(t::Vector{Function}) = LaplaceFilter{Float64}(t)
+LaplaceFilter(t::Vector{<:Function}) = LaplaceFilter{Float64}(t)
 LaplaceFilter(t::Function) = LaplaceFilter{Float64}(Function[t])
 
 # Convolve LaplaceFilters by convolution theorem
-Base.:∘(F1::LaplaceFilter{T}, F2::LaplaceFilter{T}) where T = LaplaceFilter{T}([F1.terms; F2.terms])
+Base.:∘(F1::LaplaceFilter, F2::LaplaceFilter) = LaplaceFilter([F1.terms; F2.terms])
 
 # Evaluate LaplaceFilter
-ℒ(F::LaplaceFilter) = x->convert(Complex, prod(call_all(F.terms,x)))
-freeze(F::LaplaceFilter; method=talbot, accuracy=32) = ILt(ℒ(F), method, accuracy)
-(F::LaplaceFilter{T})(t::T) where T = convert(Float64,freeze(F)(t))
+function ℒ(F::LaplaceFilter)
+    function LLaplace(s::V)::V where V
+        prod(call_all(F.terms,s))
+    end
+end
+
+function freeze(F::LaplaceFilter{T}; method=talbot, accuracy=32) where T
+    ilt = ILt(ℒ(F), method, accuracy)
+    function frozen(x::T)::T
+        ilt(x)
+    end
+end
+
+((F::LaplaceFilter{T})(t::T)::T) where T = freeze(F)(t)
 
 # Add LaplaceFilters
-Base.:+(F1::LaplaceFilter{T}, F2::LaplaceFilter{T}) where T = LaplaceFilter{T}([s->convert(Float64, ℒ(F1)(s)+ℒ(F2)(s))])
+Base.:+(F1::LaplaceFilter, F2::LaplaceFilter) = LaplaceFilter([s->convert(Float64, ℒ(F1)(s)+ℒ(F2)(s))])
 # Scale LaplaceFilters
-Base.:*(a, F::LaplaceFilter{T}) where T = LaplaceFilter{T}([x->a; F.terms])
+Base.:*(a, F::LaplaceFilter) = LaplaceFilter([x->a; F.terms])
 # Sign-Invert LaplaceFilters
 Base.:-(F1::LaplaceFilter) = (-1) * F1
 # Subtract LaplaceFilters
 Base.:-(F1::LaplaceFilter, F2::LaplaceFilter) = F1 + (-F2)
 
 ### GammaFilter
-struct GammaFilter{T,E} <: Filter{T, E}
-    α::T
-    k::T
+struct GammaFilter{T,A,K} <: Filter{T, Float64}
+    α::A
+    k::K
 end
+GammaFilter(α::A, k::K) where {A,K} = GammaFilter{Float64,A,K}(α, k)
 
 # Convolve GammaFilters (convert to LaplaceFilter if necessary)
-function Base.:∘(F1::GammaFilter{T,E}, F2::GammaFilter{T,E}) where {T,E}
+function Base.:∘(F1::GammaFilter, F2::GammaFilter)
     if F1.α == F2.α
-        GammaFilter{T,E}(F1.α, F1.k+F2.k)
+        GammaFilter(F1.α, F1.k+F2.k)
     else
         LaplaceFilter(F1)∘LaplaceFilter(F2)
     end
@@ -83,16 +95,20 @@ end
 
 
 # Evaluate GammaFilter
-ℒ(F::GammaFilter) = s->(F.α/(s+F.α))^F.k
+function ℒ(F::GammaFilter)
+    function Lgamma(s::V)::V where V
+        (F.α/(s+F.α))^F.k
+    end
+end
+
 freeze(F::GammaFilter) = F
-(F::GammaFilter)(t) = (F.α^F.k)/gamma(F.k)*t^(F.k-1)*exp(-F.α*t)
-(F::GammaFilter)(t::Vector) = F.(t)
+((F::GammaFilter{T,A,K})(t::T)::promote_type(T,A,K)) where {T,A,K} = (F.α^F.k)/gamma(F.k)*t^(F.k-1)*exp(-F.α*t)
 
 # Convert GammaFilter to LaplaceFilter
-LaplaceFilter(F::GammaFilter{T,E}) where {T,E} = LaplaceFilter{T}([ℒ(F)])
+LaplaceFilter(F::GammaFilter) = LaplaceFilter([ℒ(F)])
 
 # ExponentialFilter
-ExponentialFilter(α=1.0) = GammaFilter{Float64, Float64}(α, 1)
+ExponentialFilter(α=1.0) = GammaFilter(α, 1)
 
 
 #####################################
@@ -101,19 +117,27 @@ ExponentialFilter(α=1.0) = GammaFilter{Float64, Float64}(α, 1)
 
 struct EventTrain{T,E}
     times::Vector{T}
-    events::Vector{E}
-end
-function EventTrain(times::Vector{T}) where T
-    if ~issorted(times)
-        sort!(times)
+    events::E
+    function EventTrain(times::Vector{T}, events::E = 1) where {T,E}
+        if ~issorted(times)
+            ord = sortperm(times)
+            times = times[ord]
+
+            if isa(events, Vector)
+                events = events[ord]
+            end
+        end
+        new{T,E}(times, events)
     end
-    EventTrain{T, Float64}(times, ones(Float64, length(times)))
 end
 
-struct FilteredEventTrain{T,E,F<:Filter{T,E}}
+
+struct FilteredEventTrain{T,E,F<:Filter}
     event_train::EventTrain{T,E}
     F::F
 end
+
+#FilteredEventTrain(e::EventTrain{T,E,F}, F::F) where {T,E,F<:Filter} = FilteredEventTrain{T,E,F}(e, F)
 
 Base.length(s::EventTrain) = length(s.times)
 Base.length(s::FilteredEventTrain) = length(s.event_train)
@@ -121,45 +145,68 @@ Base.endof(s::EventTrain) = length(s)
 Base.endof(s::FilteredEventTrain) = length(s)
 
 """Merge two event trains (times must be SORTED!)"""
-function (Base.:+(s::EventTrain{S,E}, t::EventTrain{T, F})::EventTrain{promote_type(S,T),promote_type(E,F)}) where {S,T,E,F}
+function Base.:+(s::EventTrain{S,E}, t::EventTrain{T, F}) where {S,T,E,F}
     ST = promote_type(S,T)
-    EF = promote_type(E,F)
     new_times = ST[]
-    new_events = EF[]
+
+    EF = if (E<:Vector) | (F<:Vector)
+        # We need a vector to hold the events
+        eltype_E = E<:Vector ? eltype(E) : E
+        eltype_F = F<:Vector ? eltype(F) : F
+        Vector{promote_type(eltype_E,eltype_F)}
+    elseif s.events != t.events
+        # the events of s and t are different and must thus be stored in a vector
+        Vector{promote_type(E,F)}
+    else
+        # We don't need a vector to hold the events
+        promote_type(E,F)
+    end
+
+    new_events = (EF<:Vector) ? EF() : EF(s.events)
+
     (i1,i2) = (1,1)
     (n1,n2) = length.((s, t))
     while (i1 <= n1) & (i2 <= n2)
         if(s.times[i1] < t.times[i2])
             push!(new_times, s.times[i1])
-            push!(new_events, s.events[i1])
+
+            if EF<:Vector
+                push!(new_events, (E<:Vector) ? s.events[i1] : s.events)
+            end
             i1 += 1
         else
             push!(new_times, t.times[i2])
-            push!(new_events, t.events[i2])
+            if EF<:Vector
+                push!(new_events, (F<:Vector) ? t.events[i2] : t.events)
+            end
             i2 += 1
         end
     end
 
     while i1 <= n1
         push!(new_times, s.times[i1])
-        push!(new_events, s.events[i1])
+        if EF<:Vector
+            push!(new_events,(E<:Vector) ? s.events[i1] : s.events)
+        end
         i1 += 1
     end
 
     while i2 <= n2
         push!(new_times, t.times[i2])
-        push!(new_events, t.events[i2])
+        if EF<:Vector
+            push!(new_events,(F<:Vector) ? t.events[i2] : t.events)
+        end
         i2 += 1
     end
 
-    return EventTrain{ST, EF}(new_times, new_events)
+    return EventTrain(new_times, new_events)
 end
 # Add FilteredEventTrains
-function Base.:+(s1::FilteredEventTrain{T,E,F},s2::FilteredEventTrain{T,G,H}) where {T,E,F,G,H}
+function Base.:+(s1::FilteredEventTrain,s2::FilteredEventTrain)
     return if s1.F == s2.F
-        FilteredEventTrain{T,E,F}(s1.event_train+s2.event_train, s1.F)
+        FilteredEventTrain(s1.event_train+s2.event_train, s1.F)
     elseif s1.event_train == s2.event_train
-        FilteredEventTrain{T,E,F}(s1.event_train, s1.F+s2.F)
+        FilteredEventTrain(s1.event_train, s1.F+s2.F)
     else
         x->(s1(x)+s2(x))
     end
@@ -176,16 +223,17 @@ Base.:-(s1::EventTrain, s2::EventTrain) = s1 + (-s2)
 Base.:-(s1::FilteredEventTrain, s2::FilteredEventTrain) = s1 + (-s2)
 
 # Scale EventTrain
-Base.:*(a, s::EventTrain{S,E}) where {S,E} = EventTrain{S,E}(s.times, a.*s.events)
+Base.:*(a, s::EventTrain) = EventTrain(s.times, a.*s.events)
 # Scale FilteredEventTrain
-Base.:*(a, s::FilteredEventTrain{S,E,F}) where {S,E,F} = FilteredEventTrain{S,E,F}(a.*s.event_train, s.F)
+Base.:*(a, s::FilteredEventTrain) = FilteredEventTrain(a.*s.event_train, s.F)
 
 # Subsample events of a (Filtered)EventTrain
-Base.getindex(s::EventTrain{T, E}, r) where {T,E} = EventTrain{T, E}(s.times[r], s.events[r])
-Base.getindex(s::FilteredEventTrain{T, E, F}, r) where {T,E,F} = FilteredEventTrain{T, E, F}(s.event_train[r], s.F)
+Base.getindex(s::EventTrain{T,<:Vector}, r) where {T} = EventTrain(s.times[r], s.events[r])
+Base.getindex(s::EventTrain, r) = EventTrain(s.times[r], s.events)
+Base.getindex(s::FilteredEventTrain, r) = FilteredEventTrain(s.event_train[r], s.F)
 
 # Slice a time interval out of a (Filtered)EventTrain
-function fromto(s::EventTrain{T, E}, from, to) where {T,E}
+function fromto(s::EventTrain, from, to)
     if from == :start
         from = minimum(s.times)-1.0
     end
@@ -196,24 +244,25 @@ function fromto(s::EventTrain{T, E}, from, to) where {T,E}
     r = searchsortedfirst(s.times, from):searchsortedlast(s.times, to)
     return s[r]
 end
-fromto(s::FilteredEventTrain{T, E, F}, from, to) where {T,E,F} = FilteredEventTrain{T, E, F}(fromto(s.event_train, from, to), s.F)
+fromto(s::FilteredEventTrain, from, to) = FilteredEventTrain(fromto(s.event_train, from, to), s.F)
 
 # Shift a (Filtered)EventTrain in time
 function delay(s::EventTrain{T, E}, dt) where {T,E}
     new_times = s.times+dt
     ord = sortperm(new_times)
-    EventTrain{T, E}(new_times[ord], s.events[ord])
+    EventTrain(new_times[ord], (E<:Vector) ? s.events[ord] : s.events)
 end
 
-delay(s::FilteredEventTrain{T, E, F}, dt) where {T,E,F} = FilteredEventTrain{T, E, F}(delay(s.event_train, dt), s.F)
+delay(s::FilteredEventTrain, dt) = FilteredEventTrain(delay(s.event_train, dt), s.F)
 
 # Convolve two EventTrains
-Base.:∘(e1::EventTrain{T, E}, e2::EventTrain{T, E}) where {T,E} = mapreduce(dtw->delay(dtw[2]*e1, dtw[1]), +, zip(e2.times,e2.events))
+Base.:∘(e1::EventTrain{S, E}, e2::EventTrain{T, F}) where {S,T,E,F} = ((E<:Vector) | (F<:Vector)) ? mapreduce(dtw->delay(dtw[2]*e1, dtw[1]), +, zip(e2.times,e2.events)) : mapreduce(dt->delay(e2.events*e1, dt), +, e2.times)
+
 # Convolve two FilteredEventTrains
-Base.:∘(e1::FilteredEventTrain{T, E, F}, e2::FilteredEventTrain{T, E, F}) where {T,E,F} = FilteredEventTrain(e1.event_train∘e2.event_train, e1.F∘e2.F)
+Base.:∘(e1::FilteredEventTrain, e2::FilteredEventTrain) = FilteredEventTrain(e1.event_train∘e2.event_train, e1.F∘e2.F)
 # Convolve one FilteredEventTrain and one EventTrain
-Base.:∘(e1::FilteredEventTrain{T, E, F}, e2::EventTrain{T, E}) where {T,E,F} = FilteredEventTrain(e1.event_train∘e2, e1.F)
-Base.:∘(e1::EventTrain{T, E}, e2::FilteredEventTrain{T, E, F}) where {T,E,F} = e2∘e1
+Base.:∘(e1::FilteredEventTrain, e2::EventTrain) = FilteredEventTrain(e1.event_train∘e2, e1.F)
+Base.:∘(e1::EventTrain, e2::FilteredEventTrain) = e2∘e1
 
 ################################################
 # Interaction between filters and event trains #
@@ -221,25 +270,23 @@ Base.:∘(e1::EventTrain{T, E}, e2::FilteredEventTrain{T, E, F}) where {T,E,F} =
 
 
 # Use linearity to chain filters
-Base.:∘(F::FF, e::FilteredEventTrain{T, E, <:Filter{T,E}}) where {T,E,FF<:Filter{T,E}} = FilteredEventTrain(e.event_train, F∘e.F)
+Base.:∘(F::Filter, e::FilteredEventTrain) = FilteredEventTrain(e.event_train, F∘e.F)
 
 # Apply Filter to event-train
-Base.:∘(F::FT, e::EventTrain{T, E}) where {T,E, FT<:Filter{T,E}} = FilteredEventTrain{T, E, FT}(e, F)
+Base.:∘(F::Filter, e::EventTrain) = FilteredEventTrain(e, F)
 
 # Evaluate FilteredEventTrain
-function ((s::FilteredEventTrain{T,E,F})(t::T, args...)::promote_type(T,E)) where {T,E,F}
+function ((s::FilteredEventTrain{T,E,F})(t::T, args...)) where {T,E,F}
     s_frozen = freeze(s, args...)
     return s_frozen(t)
 end
 
 function freeze(s::FilteredEventTrain{T,E,F}, max_range=nothing) where {T,E,F}
-    TE = promote_type(T,E)
     F_frozen = freeze(s.F)
 
-    function frozen(t::T)::TE
+    function frozen(t::T)
         sub_train = fromto(s.event_train, max_range==nothing ? :start : t-max_range, t)
-        f= convert(Vector{TE}, F_frozen(t-sub_train.times))
-        return f ⋅ sub_train.events
+        return sum(F_frozen.(t.-sub_train.times).*sub_train.events)
     end
 end
 
@@ -250,10 +297,9 @@ end
 
 
 
-@recipe f(e::EventTrain{T,E}, y=0.0) where {T,E<:Real} = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; y+e.events'; fill(NaN, length(e.times))'][:])
-@recipe f(e::EventTrain, y=0.0, height=1.0) = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; fill(y+height, length(e.times))'; fill(NaN, length(e.times))'][:])
+@recipe f(e::EventTrain, y=0.0) = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; y+e.events'; fill(NaN, length(e.times))'][:])
 
-@recipe function f(e::FilteredEventTrain, xmin=:start, xmax=:end; show_events=false, show_kernels=false, stack_kernels=true, event_color=:black)
+@recipe function f(e::FilteredEventTrain{T,E,F}, xmin=:start, xmax=:end; show_events=false, show_kernels=false, stack_kernels=true, event_color=:black) where {T,E,F}
     if xmax==:end
         xmax = maximum(e.event_train.times)
     end
@@ -274,26 +320,41 @@ end
     if show_kernels
         f = freeze(e.F)
         sub = fromto(e, :start, xmax)
-        for (t,w) ∈ zip(sub.event_train.times, sub.event_train.events)
-            if t >= xmax
-                continue
-            end
 
-            if stack_kernels
-                @series begin
-                    linewidth := 1
-                    linestyle := :dot
-                    color := event_color
-                    label := ""
-                    (x->convert(Float64, fromto(sub, :start, t)(x))), t, xmax
+        if stack_kernels
+            for t ∈ sub.event_train.times
+                if t<xmax
+                    @series begin
+                        linewidth := 1
+                        linestyle := :dot
+                        color := event_color
+                        label := ""
+                        (x->convert(Float64, fromto(sub, :start, t)(x))), t, xmax
+                    end
                 end
-            else
-                @series begin
-                    linewidth := 1
-                    linestyle := :dot
-                    color := event_color
-                    label := ""
-                    (x->convert(Float64, x>=t ? (w*f(x-t)) : 0.0)), t, xmax
+            end
+        elseif (E<:Vector)
+            for (t,w) ∈ zip(sub.event_train.times, sub.event_train.events)
+                if t<xmax
+                    @series begin
+                        linewidth := 1
+                        linestyle := :dot
+                        color := event_color
+                        label := ""
+                        (x->convert(Float64, x>=t ? (w*f(x-t)) : 0.0)), t, xmax
+                    end
+                end
+            end
+        else
+            for t ∈ sub.event_train.times
+                if t<xmax
+                    @series begin
+                        linewidth := 1
+                        linestyle := :dot
+                        color := event_color
+                        label := ""
+                        (x->convert(Float64, x>=t ? (sub.event_train.events*f(x-t)) : 0.0)), t, xmax
+                    end
                 end
             end
         end
