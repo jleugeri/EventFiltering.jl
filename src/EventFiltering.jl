@@ -117,6 +117,8 @@ end
 
 Base.length(s::EventTrain) = length(s.times)
 Base.length(s::FilteredEventTrain) = length(s.event_train)
+Base.endof(s::EventTrain) = length(s)
+Base.endof(s::FilteredEventTrain) = length(s)
 
 """Merge two event trains (times must be SORTED!)"""
 function (Base.:+(s::EventTrain{S,E}, t::EventTrain{T, F})::EventTrain{promote_type(S,T),promote_type(E,F)}) where {S,T,E,F}
@@ -197,7 +199,7 @@ end
 fromto(s::FilteredEventTrain{T, E, F}, from, to) where {T,E,F} = FilteredEventTrain{T, E, F}(fromto(s.event_train, from, to), s.F)
 
 # Shift a (Filtered)EventTrain in time
-delay(s::EventTrain{T, E}, dt) where {T,E} = EventTrain{T, E}(s.times + dt, s.events)
+delay(s::EventTrain{T, E}, dt) where {T,E} = EventTrain{T, E}(sort(s.times + dt), s.events)
 delay(s::FilteredEventTrain{T, E, F}, dt) where {T,E,F} = FilteredEventTrain{T, E, F}(delay(s.event_train, dt), s.F)
 
 # Convolve two EventTrains
