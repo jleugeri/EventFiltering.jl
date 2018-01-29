@@ -8,6 +8,8 @@ This design is for example suitable for working with neural spike trains and neu
 
 ## Filters
 Thus far, `LaplaceFilter`s and `GammaFilter`s are implemented.
+All filters afford linear combinations via the `LinearFilterCombination`s type, i.e. for two filters $F_1$ and $F_2$, the filter $F_3 := aF_1 + bF_2$ is a valid filter, as well.
+Convolutions with event trains and other filters are implemented in a rather efficient way, returning a "flat" filter structure wherever possible (ie. adding/scaling/convolving `LinearFilterCombination`s of Filters of a certain type again results in a `LinearFilterCombination` of the same type).
 
 ### LaplaceFilters
 `LaplaceFilter`s are defined by their Laplace Transform.
@@ -19,6 +21,9 @@ For equal constants `α`, they are closed under convolution; for different `\alp
 they are automatically converted to `LaplaceFilter`s before convolution.
 `GammaFilter`s are very efficient, yet less flexible than `LaplaceFilter`s.
 For operations like addition, subtraction, negation etc. they must be manually converted to `LaplaceFilter`s.
+
+`ExponentialFilter`s, a special case of `GammaFilter`s with `k=1` have a corresponding short-hand function.
+
 
 
 ## Events
@@ -75,6 +80,24 @@ e_shift = delay(e, 1.0)
 
 # jitter randomly
 e_jitter = delay(e, 0.1*randn(length(e)))
+```
+
+### Arithmetic with event trains
+```julia
+using Plots
+e1 = EventTrain([5.0, 2.0, 3.0], 3.0)
+E1 = ExponentialFilter(1.0)
+E2 = ExponentialFilter(2.0)
+
+F1 = E1∘E1∘E1
+F2 = E1∘E2
+
+x1 = F1∘e1
+x2 = F2∘e1
+
+y = x1-x2
+
+plot(y, 0, 6, show_kernels=true, show_events=true)
 ```
 
 For more examples, see the the [docs](./docs/) folder.

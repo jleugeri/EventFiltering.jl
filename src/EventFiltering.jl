@@ -24,7 +24,7 @@ plot!(M, 0, 10, color=:black)
 module EventFiltering
 using InverseLaplace, Plots
 
-export Filter, LaplaceFilter, GammaFilter, ExponentialFilter, EventTrain, FilteredEventTrain, freeze, fromto, ℒ, delay
+export Filter, LinearFilterCombination, LaplaceFilter, GammaFilter, ExponentialFilter, EventTrain, FilteredEventTrain, freeze, fromto, ℒ, delay
     # Base.:∘,
     # Base.:+,
     # Base.:-,
@@ -40,7 +40,6 @@ call_all(fs, args...) = [f(args...) for f in fs]
 ###########
 
 abstract type Filter{T, E} end
-
 
 ### LaplaceFilter
 struct LaplaceFilter{T} <: Filter{T, Float64}
@@ -67,15 +66,6 @@ function freeze(F::LaplaceFilter{T}; method=talbot, accuracy=32) where T
 end
 
 ((F::LaplaceFilter{T})(t::T)::T) where T = freeze(F)(t)
-
-# Add LaplaceFilters
-Base.:+(F1::LaplaceFilter, F2::LaplaceFilter) = LaplaceFilter([s->convert(Float64, ℒ(F1)(s)+ℒ(F2)(s))])
-# Scale LaplaceFilters
-Base.:*(a, F::LaplaceFilter) = LaplaceFilter([x->a; F.terms])
-# Sign-Invert LaplaceFilters
-Base.:-(F1::LaplaceFilter) = (-1) * F1
-# Subtract LaplaceFilters
-Base.:-(F1::LaplaceFilter, F2::LaplaceFilter) = F1 + (-F2)
 
 ### GammaFilter
 struct GammaFilter{T,A,K} <: Filter{T, Float64}
@@ -109,6 +99,54 @@ LaplaceFilter(F::GammaFilter) = LaplaceFilter([ℒ(F)])
 
 # ExponentialFilter
 ExponentialFilter(α=1.0) = GammaFilter(α, 1)
+
+struct LinearFilterCombination{Ws, Fs} <: Filter{Float64, Float64}
+    a::Vector{Ws}
+    F::Vector{Fs}
+end
+
+
+function freeze(F::LinearFilterCombination)
+    frozen_funs = map(freeze, F.F)
+    function (frozen(x::T)::T) where T
+        F.a⋅call_all(frozen_funs, x)
+    end
+end
+
+function ℒ(F::LinearFilterCombination)
+    ℒs = map(ℒ, F.F)
+    function (LLFC(s::V)::V) where V
+        F.a⋅call_all(ℒs, s)
+    end
+end
+
+((F::LinearFilterCombination)(t::T)::T) where T = freeze(F)(t)
+
+
+# Convert Filter to LinearFilterCombination
+LinearFilterCombination(F::LinearFilterCombination) = F
+LinearFilterCombination(F::Filter) = LinearFilterCombination([1.0],[F])
+
+# Add LinearFilterCombinations
+Base.:+(F1::LinearFilterCombination, F2::LinearFilterCombination) = LinearFilterCombination([F1.a;F2.a],[F1.F;F2.F])
+# Scale LinearFilterCombinations
+Base.:*(a::Real, F::LinearFilterCombination) = LinearFilterCombination(F.a*a, F.F)
+
+# Convolve LinearFilterCombinations by linearity
+Base.:∘(F1::LinearFilterCombination, F2::LinearFilterCombination) = LinearFilterCombination([a*b for a ∈ F1.a for b ∈ F2.a], [f∘g for f ∈ F1.F for g ∈ F2.F])
+Base.:∘(F1::Filter, F2::LinearFilterCombination) = LinearFilterCombination(F1) ∘ F2
+Base.:∘(F1::LinearFilterCombination, F2::Filter) = F2∘F1
+
+
+# Fallback methods enabling linearity for all filter types
+Base.:+(F1::Filter, F2::Filter) = LinearFilterCombination(F1)+LinearFilterCombination(F2)
+# Scale Filters
+Base.:*(a::Real, F::Filter) = LinearFilterCombination([a], [F])
+Base.:*(F::Filter, a::Real) = LinearFilterCombination([a], [F])
+# Sign-Invert Filters
+Base.:-(F1::Filter) = (-1) * F1
+# Subtract Filters
+Base.:-(F1::Filter, F2::Filter) = F1 + (-F2)
 
 
 #####################################
@@ -206,11 +244,9 @@ function Base.:+(s1::FilteredEventTrain,s2::FilteredEventTrain)
     return if s1.F == s2.F
         FilteredEventTrain(s1.event_train+s2.event_train, s1.F)
     elseif s1.event_train == s2.event_train
-        try
-            FilteredEventTrain(s1.event_train, s1.F+s2.F)
-        catch
-            x->(s1(x)+s2(x))
-        end
+        FilteredEventTrain(s1.event_train, s1.F+s2.F)
+    elseif s1.event_train == -s2.event_train
+        FilteredEventTrain(s1.event_train, s1.F-s2.F)
     else
         x->(s1(x)+s2(x))
     end
