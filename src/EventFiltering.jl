@@ -300,6 +300,10 @@ end
     x->f(x), xmin, xmax
 end
 
+@recipe function f(fv::Vector{Filter}, xmin, xmax)
+    [x->f(x) for f in fv], xmin, xmax
+end
+
 @recipe function f(e::EventTrain, y=0.0)
     y = (length(y) == length(e.times)) ? y : fill(y, length(e.times))
     ([e.times'; e.times'; e.times'][:], [y'; (y+e.events)'; fill(NaN, length(e.times))'][:])
