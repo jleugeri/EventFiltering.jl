@@ -297,7 +297,9 @@ end
 
 
 
-@recipe f(e::EventTrain, y=0.0) = ([e.times'; e.times'; e.times'][:], [fill(y, length(e.times))'; y+e.events'; fill(NaN, length(e.times))'][:])
+@recipe function f(e::EventTrain, y=0.0)
+    y = (length(y) == length(e.times)) ? y : fill(y, length(e.times))
+    ([e.times'; e.times'; e.times'][:], [y'; (y+e.events)'; fill(NaN, length(e.times))'][:])
 
 @recipe function f(e::FilteredEventTrain{T,E,F}, xmin=:start, xmax=:end; show_events=false, show_kernels=false, stack_kernels=true, event_color=:black) where {T,E,F}
     if xmax==:end
