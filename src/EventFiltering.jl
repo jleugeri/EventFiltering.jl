@@ -296,6 +296,9 @@ end
 ####################
 
 
+@recipe function f(f::Filter, xmin, xmax)
+    x->f(x), xmin, xmax
+end
 
 @recipe function f(e::EventTrain, y=0.0)
     y = (length(y) == length(e.times)) ? y : fill(y, length(e.times))
