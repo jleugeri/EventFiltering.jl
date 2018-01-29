@@ -206,7 +206,11 @@ function Base.:+(s1::FilteredEventTrain,s2::FilteredEventTrain)
     return if s1.F == s2.F
         FilteredEventTrain(s1.event_train+s2.event_train, s1.F)
     elseif s1.event_train == s2.event_train
-        FilteredEventTrain(s1.event_train, s1.F+s2.F)
+        try
+            FilteredEventTrain(s1.event_train, s1.F+s2.F)
+        catch
+            x->(s1(x)+s2(x))
+        end
     else
         x->(s1(x)+s2(x))
     end
